@@ -1,0 +1,6 @@
+file(MAKE_DIRECTORY "${MODEL_DIRECTORY}")
+if(EXISTS "${MODEL_SOURCE}")
+    file(COPY_FILE "${MODEL_SOURCE}" "${MODEL_DIRECTORY}/model.onnx" ONLY_IF_DIFFERENT)
+else()
+    file(REMOVE "${MODEL_DIRECTORY}/model.onnx")
+endif()

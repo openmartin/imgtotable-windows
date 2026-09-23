@@ -67,3 +67,17 @@ vcpkg_installed/
 # test output & cache
 Testing/
 .cache/
+
+# Qt Creator and local CMake settings
+*.user
+*.user.*
+CMakeUserPresets.json
+.DS_Store
+.qt/
+
+# Local SDKs and model weights
+third_party/
+resources/models/*.onnx
+resources/models/*.onnx.data
+resources/models/**/*.onnx
+resources/models/**/*.onnx.data
