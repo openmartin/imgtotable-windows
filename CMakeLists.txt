@@ -22,9 +22,14 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(IMGTOTABLE_BUILD_APP "Build the Qt Widgets desktop application" ON)
 set(ONNXRUNTIME_ROOT "" CACHE PATH "Extracted ONNX Runtime C/C++ SDK directory")
+if(APPLE)
+    set(IMGTOTABLE_CODESIGN_IDENTITY "-" CACHE STRING
+        "macOS code-signing identity; '-' is ad hoc and resets screen recording permission after code changes")
+endif()
 include(CTest)
 
-add_library(imgtotable_core STATIC core/InferenceEngine.cpp core/InferenceEngine.h)
+add_library(imgtotable_core STATIC core/InferenceEngine.cpp core/InferenceEngine.h
+    core/Recognizer.cpp core/Recognizer.h)
 target_include_directories(imgtotable_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 
 if(ONNXRUNTIME_ROOT)
@@ -67,7 +72,9 @@ if(IMGTOTABLE_BUILD_APP)
     find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets)
     qt_add_executable(imgtotable WIN32 MACOSX_BUNDLE
         src/main.cpp ui/MainWindow.cpp ui/MainWindow.h
-        platform/PlatformUtils.cpp platform/PlatformUtils.h)
+        ui/CaptureOverlay.cpp ui/CaptureOverlay.h
+        platform/PlatformUtils.cpp platform/PlatformUtils.h
+        platform/GlobalHotkey.cpp platform/GlobalHotkey.h)
     target_link_libraries(imgtotable PRIVATE imgtotable_core Qt6::Core Qt6::Gui Qt6::Widgets)
     imgtotable_warnings(imgtotable)
     set_target_properties(imgtotable PROPERTIES
@@ -77,10 +84,14 @@ if(IMGTOTABLE_BUILD_APP)
 
     if(WIN32)
         set(modelDirectory "$<TARGET_FILE_DIR:imgtotable>/models")
-        target_compile_definitions(imgtotable PRIVATE IMGTOTABLE_MODEL_RELATIVE_PATH="models/model.onnx")
+        target_compile_definitions(imgtotable PRIVATE IMGTOTABLE_MODEL_RELATIVE_PATH="models")
     elseif(APPLE)
+        set_target_properties(imgtotable PROPERTIES
+            MACOSX_BUNDLE_GUI_IDENTIFIER "com.imgtotable.desktop"
+            MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/platform/Info.plist.in")
         set(modelDirectory "$<TARGET_BUNDLE_CONTENT_DIR:imgtotable>/Resources/models")
-        target_compile_definitions(imgtotable PRIVATE IMGTOTABLE_MODEL_RELATIVE_PATH="../Resources/models/model.onnx")
+        target_compile_definitions(imgtotable PRIVATE IMGTOTABLE_MODEL_RELATIVE_PATH="../Resources/models")
+        target_link_libraries(imgtotable PRIVATE "-framework Carbon" "-framework CoreGraphics")
         if(ONNXRUNTIME_ROOT)
             # Preserve versioned dylib names/symlinks used by @rpath install names.
             file(GLOB onnxDylibs "${ONNXRUNTIME_ROOT}/lib/libonnxruntime*.dylib")
@@ -97,11 +108,21 @@ if(IMGTOTABLE_BUILD_APP)
     # Runs on every build, so replacing/removing a model needs no source relink.
     add_custom_target(imgtotable_model ALL
         COMMAND ${CMAKE_COMMAND}
-            "-DMODEL_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/resources/models/model.onnx"
+            "-DMODEL_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/resources/models"
             "-DMODEL_DIRECTORY=${modelDirectory}"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/CopyModel.cmake"
         VERBATIM)
     add_dependencies(imgtotable imgtotable_model)
+    if(APPLE)
+        # The model and runtime files are staged after CMake creates the bundle.
+        # Sign the complete bundle after staging models. A persistent signing
+        # identity keeps macOS privacy permissions across executable rebuilds.
+        add_custom_target(imgtotable_sign ALL
+            COMMAND /usr/bin/codesign --force --deep --sign "${IMGTOTABLE_CODESIGN_IDENTITY}"
+                "$<TARGET_BUNDLE_DIR:imgtotable>"
+            DEPENDS imgtotable
+            VERBATIM)
+    endif()
 endif()
 
 if(BUILD_TESTING)
@@ -113,10 +134,22 @@ if(BUILD_TESTING)
     if(IMGTOTABLE_TEST_MODEL)
         add_test(NAME inference_identity COMMAND inference_tests "${IMGTOTABLE_TEST_MODEL}")
     endif()
+    add_executable(recognizer_tests tests/RecognizerTests.cpp)
+    target_link_libraries(recognizer_tests PRIVATE imgtotable_core)
+    imgtotable_warnings(recognizer_tests)
+    if(ONNXRUNTIME_ROOT AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/resources/models/SLANet_plus/inference.onnx")
+        add_test(NAME recognizer_core COMMAND recognizer_tests
+            "${CMAKE_CURRENT_SOURCE_DIR}/resources/models"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/table.pgm"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/merged_table.pgm"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/long_chinese.pgm")
+    else()
+        add_test(NAME recognizer_core COMMAND recognizer_tests)
+    endif()
 endif()
 
 if(WIN32 AND ONNXRUNTIME_ROOT)
-    foreach(target IN ITEMS imgtotable inference_tests)
+    foreach(target IN ITEMS imgtotable inference_tests recognizer_tests)
         if(TARGET ${target})
             add_custom_command(TARGET ${target} POST_BUILD
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different

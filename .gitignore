@@ -74,6 +74,7 @@ Testing/
 CMakeUserPresets.json
 .DS_Store
 .qt/
+:memory:.ses
 
 # Local SDKs and model weights
 third_party/

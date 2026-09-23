@@ -34,8 +34,8 @@ bool InferenceEngine::loadModel(const std::filesystem::path& path) {
         if (state->session.GetInputCount() != 1 || state->session.GetOutputCount() != 1) {
             throw std::runtime_error("This starter supports exactly one input and one output.");
         }
-        const auto input = state->session.GetInputTypeInfo();
-        const auto output = state->session.GetOutputTypeInfo();
+        const auto input = state->session.GetInputTypeInfo(0);
+        const auto output = state->session.GetOutputTypeInfo(0);
         for (const auto* type : {&input, &output}) {
             if (type->GetONNXType() != ONNX_TYPE_TENSOR ||
                 type->GetTensorTypeAndShapeInfo().GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
